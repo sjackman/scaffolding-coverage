@@ -1,0 +1,115 @@
+# Determine the required mate-pair coverage for scaffolding
+
+Shaun Jackman 2013-11-19
+
+# Background
+
+Pebble and Rock Band: Heuristic Resolution of Repeats and Scaffolding in the Velvet Short-Read de Novo Assembler
+
+Daniel R. Zerbino, Gayle K. McEwen, Elliott H. Margulies, Ewan Birney
+
+http://dx.doi.org/doi:10.1371/journal.pone.0008407.g002
+
+## Estimating the expected number of paired-end connections between two contigs
+
+> For each pair of contigs connected by read pairs, and for each
+> insert library, we call A the length of the longer node, B the
+> length of the shorter one, D the estimated distance between the two,
+> and ρ the density of paired-end reads on the longer node. The
+> paired-end reads are characterised by the mean μ and the standard
+> deviation σ of the insert length distribution.
+>
+> We first define a few variables:
+>
+> ![variables](http://www.plosone.org/article/fetchObject.action?uri=info:doi/10.1371/journal.pone.0008407.e001&representation=PNG)
+>
+> We finally obtain an estimate of the expected number X of paired-end
+> connections between the two contigs (cf. Text S1), using the
+> probability density Q and the standard error function erf associated
+> to the normal distribution:
+>
+> ![estimate](http://www.plosone.org/article/fetchObject.action?uri=info:doi/10.1371/journal.pone.0008407.e002&representation=PNG)
+
+# Load libraries
+```{r Load libraries, echo=FALSE}
+library(lattice)
+opts_chunk$set(tidy=FALSE, fig.widht = 10, fig.height = 5)
+```
+
+# Read the data
+```{r Read the data}
+data.all <- read.table('168191770.fixmate.sort.rmdup.bam.tab', header=TRUE)
+```
+
+# Formula
+## Expected number of pairs spanning two contigs
+```{r Formula}
+ENumPairs <- function(A, B, D, mu, sigma, rho)
+{
+	alpha <- (D - mu) / sigma
+	beta <- (D + B - mu) / sigma
+	gamma <- (D + A - mu) / sigma
+	delta <- (D + A + B - mu) / sigma
+	phi <- dnorm
+	erf <- function(x) 2 * pnorm(x * sqrt(2)) - 1
+	(rho * sigma * (phi(alpha) - phi(beta) - alpha / 2 * (erf(beta / sqrt(2)) - erf(alpha / sqrt(2))))
+		+ rho * B / 2 * (erf(gamma / sqrt(2)) - erf(beta / sqrt(2)))
+		- rho * sigma * (phi(gamma) - phi(delta) - delta / 2 * (erf(delta / sqrt(2)) - erf(gamma / sqrt(2)))))
+}
+```
+
+# Summarize the data
+```{r Summarize the data}
+densityplot(data.all$tlen, xlab = 'Fragment size')
+table(data.all$tlen > 1000)
+summary(subset(data.all, tlen < 1000)$tlen)
+data <- subset(data.all, tlen > 1000)
+summary(data$tlen)
+sd(data$tlen)
+bwplot(data$tlen, xlab = 'Fragment size')
+densityplot(data$tlen, xlab = 'Fragment size')
+```
+
+# Parameters
+```{r Parameters}
+nPerLane <- 100e6 # Number of mapped pairs per HiSeq lane
+G <- 20e9 # Size of the genome
+rho <- nPerLane / G # Density of fragments
+S <- 2000 # Minimum contg size
+mu <- mean(data$tlen) # Mean fragment size
+sigma <- sd(data$tlen) # Standard deviation of the fragment size
+```
+
+### Density of fragments per HiSeq lane
+&rho; = `r rho`
+### Mean fragment size
+&mu; = `r mean(data$tlen)`
+### Standard deviation of the fragment size
+&sigma; = `r sd(data$tlen)`
+
+# Expected number of pairs spanning two 2 kbp contigs separated by 35 kbp for one lane of HiSeq data
+```{r Example}
+ENumPairs(A = S, B = S, D = 35e3, mu = mu, sigma = sigma, rho = rho)
+```
+
+# Expected number of spanning pairs vs. distance between contigs
+```{r Plot E[n] vs. distance}
+x <- data.frame(Distance = seq(mu - 4 * sigma, mu + 3 * sigma, 1000))
+x$ENumPairs <- ENumPairs(A = S, B = S, D = x$Distance, mu = mu, sigma = sigma, rho = rho)
+xyplot(ENumPairs ~ Distance, x,
+	type = c('p', 'l'),
+	main = 'Expected number of spanning pairs vs. distance between contigs',
+	xlab = 'Distance between contigs',
+	ylab = 'Expected number of spanning pairs per HiSeq lane')
+```
+
+# Expected number of spanning pairs vs. contig size
+```{r Plot E[n] vs. contig size}
+x <- data.frame(Size = seq(0, 6000, 500))
+x$ENumPairs <- ENumPairs(A = x$Size, B = x$Size, D = mu, mu = mu, sigma = sigma, rho = rho)
+xyplot(ENumPairs ~ Size, x,
+	type = c('p', 'l'),
+	main = 'Expected number of spanning pairs vs. distance between contigs',
+	xlab = 'Size of both contigs',
+	ylab = 'Expected number of spanning pairs per HiSeq lane')
+```
